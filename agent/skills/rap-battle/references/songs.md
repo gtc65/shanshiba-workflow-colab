@@ -22,10 +22,11 @@
 依序寫：
 1. 結構：`ONE CONTINUOUS RAP SONG by ONE rapper … EXACTLY 144 BPM`（有唱段就寫 `rap verse, then a short 4-line SUNG melodic hook, then back to rap`）。
 2. 曲風＋招牌樂器（每場不同）：英國巴洛克 boom-bap＋大鍵琴、德國巴洛克 trap＋管風琴、G-funk＋里拉琴、爵士 boom-bap＋古琴洞簫、銅管進行曲 hard trap……
-3. 前奏與收尾：A＝4 小節樂器前奏、`the beat STOPS DEAD on one huge hit (hard stop, no outro)`；B＝4 小節 DJ 刷碟前奏、`the LAST SIX LINES are a furious knockout climax … crowd roars 'OHHH' … rides out 4 bars with scratches`。
+3. 前奏與收尾：A＝4 小節樂器前奏、`the beat STOPS DEAD on one huge hit (hard stop, no outro)`；B＝4 小節 DJ 刷碟前奏、`the LAST EIGHT LINES build gradually …（見第 6 點）… crowd roars 'OHHH' … rides out 4 bars with scratches`。
 4. 聲音：`ONE SOLO MALE RAPPER only: a DEEP, RASPY baritone …` vs `a BRIGHT, SHARP young TENOR …`——**兩人一定要一低一高、個性不同**。
 5. 咬字：`crystal-clear Mandarin rap with Taiwanese diction, every number clear`。
-6. negative：`slow ballad, mumble rap, autotune-heavy, female voice, choir, second rapper, duet, featuring, melisma, vocal runs, Indian scale`。
+6. 殺招段：`The LAST EIGHT LINES build GRADUALLY at the same BPM, never faster: first two lines stripped back with no drums, a quiet restrained voice; then drums return; every two lines add one layer and the voice gets louder and higher; one beat of silence before the final line, which is the loudest moment of the song`（使用者 2026-11-01 要情緒慢慢堆）。**實測（〈瑜亮之戰〉16 版）：Suno 不太聽話**：長描述標籤幾乎沒用；短標籤 `[Breakdown: no drums, ...]`、`[Build-up: ...]`、`[Drop: shouted]` 約四分之一的版本會在殺句前真的空一拍，但人聲響度仍很平。做法：多抽，量伴奏有沒有收、殺句前有沒有空拍，挑有的版本給人聽；也可以用分軌做一版音量與濾波的後製當對照（這場使用者選 Suno 原版，沒選後製）。
+7. negative：`slow ballad, mumble rap, autotune-heavy, female voice, choir, second rapper, duet, featuring, melisma, vocal runs, Indian scale`。
 
 Suno 不吃藝人名字，要寫成特徵。範例見 `pipeline/template_battle/battle.json` 的 `suno_style`。
 
@@ -52,6 +53,10 @@ python cloud/colab_h3.py film pipeline/my_battle yue   # 沒有顯卡：同一�
 - rap 的逐句聽寫天生偏低：人工確認全對的 Suno 歌也只有 0.63–0.80。看低分句（< 0.5）是唱錯還是只是聽寫不準，**最後一定要人聽**。
 - 對齊出來的段數跟歌詞句數不同＝歌詞跟送去生歌的不一樣，先修。
 - 最後一個字的時間不對（Suno 自己在後面加喊聲）→ `rappers.<A|B>.last_word_end` 填秒數。
+- **冷僻專有名詞（堯舜這類）Suno 每版都唱歪**（2026-11-01〈人性之辯〉：10 版全唱成「老鑽／藥犯／老殘」）→ 寫歌詞時就先查聽寫，或改常用字同音（字幕再換回）。歌已定稿才發現：**Kie `replace-section` 局部重唱**（最短 10 秒、每次 2 版，同音字當歌詞，例「姚 順」）→ 分人聲、逐句聽寫挑最清楚的 → **只把那幾個字的人聲剪回定稿**（定稿混音＋〔新人聲－舊人聲〕，兩端 25 ms 交叉淡化、對齊候選與定稿的時間差），伴奏和其他句不動、時間軸不變，只重拍唱那句的對嘴鏡。重唱窗外的部分 Suno 會整段重生（窗後完全不同），不能整首換。
+
+- **整首對齊可能把幾句壓成 0.1 秒**（前奏長、某段含糊時；〈瑜亮之戰〉孔明 1–4、21–24 句）：看 `align_*.json` 每句長度，太短的只取那段人聲重新對齊，同時更新 `words`，字幕韻腳才對得上。
+- **副歌不好聽，只換副歌**：`replace-section` 窗對齊小節線、每次 2 版，只把窗內接回定稿（前後 30 ms 交叉淡化）。Suno 可能把原本唱兩遍的副歌改成慢慢唱一遍；若把下一段也唱進窗內就淘汰。
 
 ## 兩首怎麼接（`make_battle.py audio` 自動做）
 
