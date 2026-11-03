@@ -222,12 +222,13 @@ def build_events(cfg, tl):
             ct = char_times(l); seq = "".join(c for c, _ in ct)
             k = seq.rfind(rh) if rh else -1
             hits = [ct[k + j][1] for j in range(len(rh))] if k >= 0 else []
-            lines.append(dict(who=who, text=l["show"], start=l["start"] - 0.05, end=l["end"] + 0.25, rh=l.get("rhyme_show", rh), hits=hits,
+            lines.append(dict(who=who, text=l["show"], start=l.get("show_start", l["start"]) - 0.05, end=l["end"] + 0.25, rh=l.get("rhyme_show", rh), hits=hits,
                               words=l["words"]))
             atk = l.get("atk")
             atk = (i % 2 == 1) if atk is None else atk
             if (atk or i == len(L) - 1) and hits:
-                attacks.append(dict(who=who, t=hits[-1], n="kill" if i == len(L) - 1 else len(rh)))
+                attacks.append(dict(who=who, t=hits[-1], n="kill" if i == len(L) - 1 else len(rh),
+                                    until=L[i + 1]["start"] if i + 1 < len(L) and L[i + 1].get("atk") is False else 1e9))   # 下一句是「收」的段落：押韻字不留到那句
     pos, text = tl["dj"]["pos"], tl["dj"]["text"]
     for key, (a, b) in pos.items():
         if key == "end":
@@ -304,7 +305,7 @@ def big_word(text, k, g):
     return im
 
 
-COMBO = {"kill": "殺招！", 1: "押韻！", 2: "雙押！", 3: "三押！"}
+COMBO = {"kill": "殺招！", 1: "押韻！", 2: "雙押！", 3: "三押！", 4: "四押！", 5: "五押！", 6: "六押！"}
 
 
 def combo_badge(n, g, k):
@@ -406,6 +407,10 @@ def render_fx(cfg, shots, ev, src, dst, wav, post):
     flash = set(cfg.get("flash_scenes", []))
     cuts = [b["start"] for a, b in zip(shots, shots[1:]) if a["scene"] != b["scene"] and b["scene"] in flash]
     (Path(post) / "fx_events.json").write_text(json.dumps({**ev, "cuts": cuts, "punches": punches}, ensure_ascii=False, indent=1), encoding="utf-8")
+    for a in attacks:                                        # 押韻字不疊到別人的鏡頭（〈瑜亮之戰〉v6「三押！」殘留到孔明反應鏡）
+        nx = next((s for s in shots if a["t"] < s["start"] < a["t"] + 1 and a["who"] not in s.get("subj", [])), None)
+        if nx:
+            a["until"] = min(a["until"], nx["start"])
     tabs = {k: speaker_tab(names[k], col[k]) for k in names}
     bugs = {lab: round_bug(lab, names[who], col[who]) for _, _, lab, who in rounds}
     shot_at = lambda t: next((s for s in shots if s["start"] <= t < s["end"]), None)
@@ -475,7 +480,7 @@ def render_fx(cfg, shots, ev, src, dst, wav, post):
                 img.alpha_composite(bw, (70, 90 + b["row"] * 165))
         for a in attacks:
             k = (t - a["t"]) * FPS
-            if 0 <= k < 24:
+            if 0 <= k < 24 and t < a["until"]:
                 b = combo_badge(a["n"], glow[a["who"]], k); img.alpha_composite(b, ((W - b.width) // 2, SUB_Y - 190))
         if len(cache) > 4000:
             cache.clear()

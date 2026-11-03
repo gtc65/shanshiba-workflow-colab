@@ -211,6 +211,16 @@ def sep_stems(src, d):
     return voc, ins
 
 
+def vocal_gaps(voc, rows, min_gap=3.0):
+    """逐句之間有沒有「人聲還在唱、歌詞卻沒對到」的空檔（Suno 常自己把副歌多唱一遍；〈瑜亮之戰〉v1 誤當器樂段，字幕和唱的人都漏了）。"""
+    import librosa
+    import numpy as np
+    v, sr = librosa.load(str(voc), sr=16000)
+    rms = lambda a, b: float(np.sqrt(np.mean(v[int(a * sr):int(b * sr)] ** 2)))
+    sung = float(np.median([rms(x["start"], x["end"]) for x in rows if x["end"] - x["start"] > 0.3]))
+    return [(round(x["end"], 1), round(n["start"], 1)) for x, n in zip(rows, rows[1:]) if n["start"] - x["end"] >= min_gap and rms(x["end"] + 0.2, n["start"] - 0.2) > sung * 0.4]
+
+
 def last_word_end(voc, word_end):
     """最後一個字唱完：強制對齊的最後一個詞結束時間（實測跟人工標的差 0–0.07 秒），人聲還很大聲就往後延，最多 0.3 秒。
     不用「人聲變小的時刻」：Suno 常在最後一句後面自己加觀眾喊聲、ad-lib，會被當成還在唱（實測晚 14 秒）。"""
@@ -268,6 +278,8 @@ def songs():
         print(k, r["name"], json.dumps({q: v for q, v in rep[k].items() if q != "low"}, ensure_ascii=False), flush=True)
         for b in rep[k]["low"]:
             print("   低分句（去聽這句有沒有唱錯）：", b, flush=True)
+        for g in vocal_gaps(voc, rows):
+            print(f"   ⚠ {g[0]}–{g[1]} 秒人聲還在唱，但歌詞沒對到（Suno 多唱一遍？）→ 把那幾句補進歌詞，字幕和鏡頭才不會漏", flush=True)
     if abs(rep["A"]["bpm"] - rep["B"]["bpm"]) > 2:
         print(f"⚠ 兩首 BPM 不同（{rep['A']['bpm']} / {rep['B']['bpm']}）：A 停在拍上→1 小節→B 會接不準，建議重生成同一個 BPM", flush=True)
     (d / "songs_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -453,6 +465,7 @@ def audio():
         for ln, r in zip(lines_of(k), D[k]["rows"]):
             out.append({"who": k, "section": r["section"], "text": r["text"], "show": show_text(ln), "rhyme": ln.get("rhyme", ""),
                         "rhyme_show": rhyme_show(ln), "atk": ln.get("atk"), "start": round(r["start"] + off, 3),
+                        **({"show_start": round(r["show_start"] + off, 3)} if r.get("show_start") else {}),
                         "end": round(min(r["end"], cap) + off, 3),
                         "words": [{"w": w["w"], "s": round(w["s"] + off, 3), "e": round(min(w["e"], cap) + off, 3)} for w in r["words"]]})
         return out
@@ -879,7 +892,7 @@ def segment(s, seg_dir, vsr_dir):
         src, mode = first, "still" if s.get("still") else "stand-in"
     else:
         src, mode = None, "slate"
-    if src is not None and out.exists() and out.stat().st_mtime > src.stat().st_mtime and abs(dur(out) - n / FPS) < 0.05:
+    if src is not None and out.exists() and out.stat().st_mtime > src.stat().st_mtime and abs(dur(out) - n / FPS) < 0.5 / FPS:   # 差 1 格就重做：容許 0.05 秒時舊片段少 1 格沒重剪，累積到畫面比聲音早 3 格（〈瑜亮之戰〉v2 抓到）
         return out, mode
     if mode == "slate":
         sh_(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c=0x303030:s=1920x1080:r=24", "-vf",
@@ -1025,12 +1038,49 @@ def cut():
 
 
 # ------------------------------------------------------------------------------------------------ 自審
+def audio_checks():
+    """使用者抓過的聲音問題自動查（review 會印）：濾掉 300 Hz 以下（手機喇叭放不出來）的單聲道音量破洞、突然掉音；最後一句之後人聲還在唱；對齊低分句。"""
+    import librosa
+    import numpy as np
+    from scipy.signal import butter, sosfilt
+    sr = 16000; m = timeline()["marks"]
+    y = sosfilt(butter(4, 300, "hp", fs=sr, output="sos"), librosa.load(str(OUT / "audio" / "mix.wav"), sr=sr, mono=True)[0])
+    db = lambda a: 20 * np.log10(np.sqrt(np.mean(a ** 2)) + 1e-7)
+    h = int(0.05 * sr); end = int(m["music_end"] * sr)
+    low = [db(y[i:i + h]) < -42 for i in range(0, end, h)]; holes = []; i = 0
+    while i < len(low):
+        j = i
+        while j < len(low) and low[j]:
+            j += 1
+        if (j - i) * 0.05 >= 0.1 and i > 0:
+            holes.append((round(i * 0.05, 2), round(j * 0.05, 2)))
+        i = max(j, i + 1)
+    e = [db(y[int(t * sr):int((t + 0.5) * sr)]) for t in np.arange(0, m["music_end"], 0.5)]
+    drops = [(round(k * 0.5, 1), round(e[k - 1] - e[k], 1)) for k in range(1, len(e)) if e[k - 1] - e[k] >= 8]
+    rep = dict(holes=holes, drops=drops, tail={}, low_ok={})
+    for k in R:
+        al = json.loads((OUT / "song" / f"align_{k}.json").read_text(encoding="utf-8")); rows = al["rows"]
+        v = librosa.load(al["vocals"], sr=sr, mono=True)[0]
+        sung = np.median([db(v[int(x["start"] * sr):int(x["end"] * sr)]) for x in rows if x["end"] - x["start"] > 0.3])
+        t0 = rows[-1]["end"] + 0.3; on = [t for t in np.arange(t0, len(v) / sr - 1, 1.0) if db(v[int(t * sr):int((t + 1) * sr)]) > sung - 8]
+        if len(on) >= 2:
+            rep["tail"][k] = (round(float(on[0]), 1), round(float(on[-1]) + 1, 1))
+        rep["low_ok"][k] = [(round(x["start"], 1), x["text"]) for x in rows if 0 <= x.get("ok", 1) < 0.3]
+    (OUT / "review" / "audio_check.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("⚠ 音量／人聲檢查（每一條都要交代，見 review-checklist 第 H 節）：", flush=True)
+    print("  音量破洞（300 Hz 以上，秒）：", holes, flush=True)
+    print("  突然掉音（秒，掉幾 dB）：", drops, flush=True)
+    print("  最後一句之後人聲還在唱（歌曲時間）：", rep["tail"], flush=True)
+    print("  對齊低分句（一定要查，不准當成聽寫不準）：", rep["low_ok"], flush=True)
+
+
 @stage("review")
 def review():
     """每秒一格接觸表（時間碼・鏡號・當下歌詞）＋H3 自己切鏡偵測（用到的範圍內）＋響度。最後一定要人看完整成片。"""
     import numpy as np
     from PIL import Image, ImageDraw, ImageFont
     sys.path.insert(0, str(REPO / "tools")); from fonts import font   # noqa: E401
+    audio_checks()
     shots, end_still = resolve_shots(); tl = timeline()
     video = OUT / "cut" / f"{CFG['title']}_v{VER}_1920x1080.mp4"
     rv = OUT / "review" / f"fc_v{VER}"; rv.mkdir(parents=True, exist_ok=True)
