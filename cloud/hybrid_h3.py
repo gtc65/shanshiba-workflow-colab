@@ -1,4 +1,5 @@
 """本機＋Colab 一起跑 H3（H3_BACKEND=both）。
+開跑前先用 cloud/colab_plan.py 算要開幾台，告訴使用者、等使用者同意（2026-11-06 起）；同一帳號開兩台＝HYBRID_COLAB_HOMES 寫兩次同一個家目錄。
 
 2026-10-11 第一次實戰（〈收假圖鑑〉直式 34 鏡、3370 格、DMAD 4 步，本機 RTX 5090＋Colab G4，HYBRID_CHUNK=8）：
   **17.9 分鐘**完成（本機 15 支、雲端 19 支、失敗 0），推算全部本機 32.6 分鐘 → **省 45%**；Colab 花 1.97 單元（含開機、關機）。
@@ -130,6 +131,13 @@ def run_hybrid(dirs, pyh3=None, tools=None):
         env = dict(os.environ, USERPROFILE=homes[k], HOME=homes[k]) if homes[k] else None
         return subprocess.run(cmd, env=env) if wait else subprocess.Popen(cmd, env=env)
 
+    def colab_taken(k):
+        """第 k 台的同名 session 是否已經開著（查不到視為沒開，交給 start 自己處理）。"""
+        tool = REPO / "cloud" / "colab_h3.py"
+        code = f"import sys; sys.path.insert(0, {str(tool.parent)!r}); sys.argv = ['x']; import colab_h3; print('ALIVE' if colab_h3.alive({(name if k == 0 else f'{name}_{k + 1}')!r}) else 'FREE')"
+        env = dict(os.environ, USERPROFILE=homes[k], HOME=homes[k]) if homes[k] else None
+        return "ALIVE" in subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+
     def others_sec():
         """收尾估算用：「本機＋其他雲端」合起來每支幾秒（只有一台雲端時就是本機速度）。"""
         loc, cl = avg("local", LOCAL_SEC), avg("cloud", CLOUD_SEC) + CLOUD_OVERHEAD / chunk
@@ -137,6 +145,10 @@ def run_hybrid(dirs, pyh3=None, tools=None):
 
     def cloud_worker(k):
         tag = f"雲端{k + 1}" if nc > 1 else "雲端"
+        # 2026-11-06 踩坑：同名 session 已開著＝很可能是別的 session 的 VM；start 會直接沿用、做完的 stop 還會把它關掉 → 不碰。
+        # 確定是自己 HYBRID_KEEP 留下的才設 COLAB_REUSE=1 或 HYBRID_KEEP=1 接著用。
+        if os.environ.get("COLAB_REUSE") != "1" and not os.environ.get("HYBRID_KEEP") and colab_taken(k):
+            _log(f"[hybrid] {tag} 同名 session 已經開著（可能是別的 session 的）→ 不用這個帳號，鏡頭由本機和其他雲端接手"); return
         _log(f"[hybrid] {tag}開機中（只裝 H3，約 3.5 分鐘，本機先跑）")
         if colab(k, "start", "--h3-only").returncode != 0:
             _log(f"[hybrid] {tag} Colab 開不起來 → 它保留的鏡頭由本機和其他雲端接手"); return
